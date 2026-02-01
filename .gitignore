@@ -1,0 +1,28 @@
+# Security: Ignore all sensitive data files
+node_modules/
+.DS_Store
+.env
+*.env
+*.json
+!package.json
+!manifest.json
+!src/**/*.json
+
+# Ignore Archive Data
+*.oca
+*.ocm
+*.tar
+*.gz
+*.zip
+
+# Ignore Keys and Secrets
+*.key
+*.token
+*.pem
+*.pub
+id_rsa
+id_rsa.pub
+
+# Ignore Test Data
+test-data/
+__tests__/**/fixtures/
