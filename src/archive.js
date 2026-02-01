@@ -114,3 +114,5 @@ if (require.main === module) {
         .then(() => console.log("✅ Done."))
         .catch(err => console.error("❌ Failed:", err));
 }
+
+module.exports = { createArchiveCBC };

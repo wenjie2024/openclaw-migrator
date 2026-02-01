@@ -91,3 +91,5 @@ if (require.main === module) {
         .then(() => console.log("✅ Restore Done."))
         .catch(err => console.error("❌ Failed:", err));
 }
+
+module.exports = { restoreArchive, fixPaths };
