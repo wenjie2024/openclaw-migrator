@@ -107,21 +107,61 @@ async function restoreArchive(archivePath, targetDir, password) {
   });
 }
 
+function deepReplacePaths(obj, oldPath, newPath) {
+  if (typeof obj === 'string') {
+    // Escape backslashes for Windows if needed, but here we focus on general path healing
+    if (obj.includes(oldPath)) {
+      return obj.replace(new RegExp(oldPath, 'g'), newPath);
+    }
+    return obj;
+  } else if (Array.isArray(obj)) {
+    return obj.map(item => deepReplacePaths(item, oldPath, newPath));
+  } else if (typeof obj === 'object' && obj !== null) {
+    const newObj = {};
+    for (const key in obj) {
+      newObj[key] = deepReplacePaths(obj[key], oldPath, newPath);
+    }
+    return newObj;
+  }
+  return obj;
+}
+
 async function fixPaths(targetDir) {
+  const os = require('os');
   const configPath = path.join(targetDir, '.openclaw/openclaw.json');
   const manifestPath = path.join(targetDir, 'manifest.json');
+
   if (fs.existsSync(configPath)) {
-    console.log('🔧 Fixing paths in openclaw.json...');
+    console.log('🔧 Running deep path healing on openclaw.json...');
     const json = await fs.readJson(configPath);
     const manifest = fs.existsSync(manifestPath) ? await fs.readJson(manifestPath) : {};
-    const oldWorkspace = manifest?.workspace || json?.agents?.defaults?.workspace;
-    const newWorkspace = path.join(targetDir, 'clawd');
 
-    if (oldWorkspace && json?.agents?.defaults) {
-      json.agents.defaults.workspace = newWorkspace;
-      await fs.writeJson(configPath, json, { spaces: 2 });
-      console.log('✅ Paths updated.');
+    const oldHome = manifest?.home;
+    const newHome = os.homedir();
+
+    let fixedJson = json;
+
+    // 1. Heal based on HOME directory change
+    if (oldHome && oldHome !== newHome) {
+      console.log(`🏠 Home directory changed: ${oldHome} -> ${newHome}`);
+      fixedJson = deepReplacePaths(fixedJson, oldHome, newHome);
     }
+
+    // 2. Heal relative workspace if it was restored into a new location
+    // (Workspace is usually relative to the user's setup, but let's ensure it's functional)
+    const oldWorkspace = manifest?.workspace;
+    const newWorkspace = path.join(targetDir, 'clawd');
+    if (oldWorkspace && oldWorkspace !== newWorkspace) {
+       console.log(`📂 Workspace relocated: ${oldWorkspace} -> ${newWorkspace}`);
+       // Only replace if it's explicitly the workspace path to avoid accidental string collisions
+       if (fixedJson.agents?.defaults?.workspace === oldWorkspace || 
+           fixedJson.agents?.defaults?.workspace === deepReplacePaths(oldWorkspace, oldHome, newHome)) {
+         fixedJson.agents.defaults.workspace = newWorkspace;
+       }
+    }
+
+    await fs.writeJson(configPath, fixedJson, { spaces: 2 });
+    console.log('✅ Path healing complete.');
   }
 }
 

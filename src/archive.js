@@ -63,14 +63,24 @@ async function createArchive(sourceDirs, outputPath, password) {
 }
 
 async function buildManifest(sourceDirs) {
+  const os = require('os');
   // Try to read workspace from openclaw.json if present
   const configDir = sourceDirs.find((d) => path.basename(d) === '.openclaw');
-  if (!configDir) return null;
-  const configPath = path.join(configDir, 'openclaw.json');
-  if (!fs.existsSync(configPath)) return null;
-  const json = await fs.readJson(configPath);
-  const workspace = json?.agents?.defaults?.workspace || null;
-  return { workspace, createdAt: new Date().toISOString() };
+  let workspace = null;
+  if (configDir) {
+    const configPath = path.join(configDir, 'openclaw.json');
+    if (fs.existsSync(configPath)) {
+      const json = await fs.readJson(configPath).catch(() => null);
+      workspace = json?.agents?.defaults?.workspace || null;
+    }
+  }
+
+  return {
+    workspace,
+    home: os.homedir(),
+    platform: os.platform(),
+    createdAt: new Date().toISOString()
+  };
 }
 
 // CLI Driver
