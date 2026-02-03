@@ -2,10 +2,16 @@ const fs = require('fs-extra');
 const path = require('path');
 const archiver = require('archiver');
 const crypto = require('crypto');
+const os = require('os');
 
 const MAGIC = Buffer.from('OCM1');
 const VERSION = 1;
 const ALGO_GCM = 1;
+
+const DEFAULT_SOURCES = [
+  path.join(os.homedir(), '.openclaw'),
+  path.join(os.homedir(), '.clawdbot')
+];
 
 function buildHeader({ salt, iv }) {
   const header = Buffer.alloc(8);
@@ -18,6 +24,8 @@ function buildHeader({ salt, iv }) {
 }
 
 async function createArchive(sourceDirs, outputPath, password) {
+  const sources = (sourceDirs && sourceDirs.length > 0) ? sourceDirs : DEFAULT_SOURCES;
+
   return new Promise(async (resolve, reject) => {
     const output = fs.createWriteStream(outputPath);
 
@@ -33,12 +41,12 @@ async function createArchive(sourceDirs, outputPath, password) {
     archive.on('error', reject);
 
     // Add manifest with workspace root (if available)
-    const manifest = await buildManifest(sourceDirs).catch(() => null);
+    const manifest = await buildManifest(sources).catch(() => null);
     if (manifest) {
       archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
     }
 
-    for (const dir of sourceDirs) {
+    for (const dir of sources) {
       if (fs.existsSync(dir)) {
         archive.directory(dir, path.basename(dir));
       } else {
@@ -64,6 +72,8 @@ async function createArchive(sourceDirs, outputPath, password) {
 
 async function buildManifest(sourceDirs) {
   const os = require('os');
+  const pkg = await fs.readJson(path.join(__dirname, '../package.json')).catch(() => ({}));
+
   // Try to read workspace from openclaw.json if present
   const configDir = sourceDirs.find((d) => path.basename(d) === '.openclaw');
   let workspace = null;
@@ -76,9 +86,14 @@ async function buildManifest(sourceDirs) {
   }
 
   return {
+    version: pkg.version || '1.1.0',
+    env: {
+      node: process.version,
+      platform: os.platform(),
+      arch: os.arch()
+    },
     workspace,
     home: os.homedir(),
-    platform: os.platform(),
     createdAt: new Date().toISOString()
   };
 }

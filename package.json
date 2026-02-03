@@ -1,6 +1,6 @@
 {
   "name": "openclaw-migrator",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "description": "Securely migrate OpenClaw agents between machines.",
   "main": "src/index.js",
   "bin": {

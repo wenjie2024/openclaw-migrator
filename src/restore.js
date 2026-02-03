@@ -88,6 +88,15 @@ async function restoreArchive(archivePath, targetDir, password) {
 
       const extractor = tar.x({
         cwd: targetDir,
+        filter: (path) => {
+          // Security: Block absolute paths and parent directory traversal
+          const normalizedPath = path.replace(/\\/g, '/');
+          if (normalizedPath.startsWith('/') || normalizedPath.includes('..')) {
+            console.warn(`🚨 Security: Blocked suspicious path in archive: ${path}`);
+            return false;
+          }
+          return true;
+        },
         onentry: (entry) => {
           console.log(`Extracting: ${entry.path}`);
         }
