@@ -26,3 +26,5 @@ id_rsa.pub
 # Ignore Test Data
 test-data/
 __tests__/**/fixtures/
+test-data/
+test-run/

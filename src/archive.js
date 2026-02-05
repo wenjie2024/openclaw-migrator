@@ -8,10 +8,48 @@ const MAGIC = Buffer.from('OCM1');
 const VERSION = 1;
 const ALGO_GCM = 1;
 
-const DEFAULT_SOURCES = [
-  path.join(os.homedir(), '.openclaw'),
-  path.join(os.homedir(), '.clawdbot')
-];
+// Auto-detect config and workspace
+function detectSources() {
+  const os = require('os');
+  const home = process.env.HOME || os.homedir();
+  const openclaw = path.join(home, '.openclaw');
+  const clawdbot = path.join(home, '.clawdbot');
+
+  // 1. Detect Config Directory
+  let configDir = null;
+  console.log("Checking HOME:", home);
+  console.log("Checking openclaw:", openclaw, fs.existsSync(openclaw));
+  console.log("Checking clawdbot:", clawdbot, fs.existsSync(clawdbot));
+
+  if (fs.existsSync(openclaw)) configDir = openclaw;
+  else if (fs.existsSync(clawdbot)) configDir = clawdbot;
+
+  if (!configDir) {
+    throw new Error("No OpenClaw installation found (~/.openclaw or ~/.clawdbot)");
+  }
+
+  // 2. Detect Workspace from Config
+  const sources = [configDir];
+  try {
+    const configPath = path.join(configDir, 'openclaw.json');
+    if (fs.existsSync(configPath)) {
+      const config = fs.readJsonSync(configPath);
+      const workspace = config?.agents?.defaults?.workspace || config?.workspace;
+
+      if (workspace && fs.existsSync(workspace)) {
+        if (path.resolve(workspace) !== path.resolve(configDir)) { // Avoid duplicates
+          sources.push(workspace);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("⚠️ Could not read workspace from config:", e.message);
+  }
+
+  return sources;
+}
+
+const DEFAULT_SOURCES = []; // Will be populated dynamically if needed
 
 function buildHeader({ salt, iv }) {
   const header = Buffer.alloc(8);
@@ -24,7 +62,17 @@ function buildHeader({ salt, iv }) {
 }
 
 async function createArchive(sourceDirs, outputPath, password) {
-  const sources = (sourceDirs && sourceDirs.length > 0) ? sourceDirs : DEFAULT_SOURCES;
+  let sources = sourceDirs;
+
+  // Auto-detect if not provided
+  if (!sources || sources.length === 0) {
+    try {
+      sources = detectSources();
+      console.log("🔍 Auto-detected sources:", sources.join(", "));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
 
   return new Promise(async (resolve, reject) => {
     const output = fs.createWriteStream(outputPath);
@@ -48,7 +96,11 @@ async function createArchive(sourceDirs, outputPath, password) {
 
     for (const dir of sources) {
       if (fs.existsSync(dir)) {
-        archive.directory(dir, path.basename(dir));
+        // Use directory name as internal path to keep structure
+        const dirName = path.basename(dir);
+        // Special case: If typical config dir, store as .openclaw-unified for restoration logic
+        // But for now, keeping original names for simplicity
+        archive.directory(dir, dirName);
       } else {
         console.warn(`⚠️ Warning: Source dir not found: ${dir}`);
       }
@@ -100,21 +152,21 @@ async function buildManifest(sourceDirs) {
 
 // CLI Driver
 if (require.main === module) {
-    const src = [
-        path.join(__dirname, '../test-data/.openclaw'),
-        path.join(__dirname, '../test-data/clawd')
-    ];
-    const dest = path.join(__dirname, '../test-data/test-archive.oca');
-    const pass = process.env.MIGRATOR_PASSWORD;
+  const src = [
+    path.join(__dirname, '../test-data/.openclaw'),
+    path.join(__dirname, '../test-data/clawd')
+  ];
+  const dest = path.join(__dirname, '../test-data/test-archive.oca');
+  const pass = process.env.MIGRATOR_PASSWORD;
 
-    if (!pass) {
-        console.error("Error: MIGRATOR_PASSWORD env var required");
-        process.exit(1);
-    }
+  if (!pass) {
+    console.error("Error: MIGRATOR_PASSWORD env var required");
+    process.exit(1);
+  }
 
-    createArchive(src, dest, pass)
-        .then(() => console.log("✅ Done."))
-        .catch(err => console.error("❌ Failed:", err));
+  createArchive(src, dest, pass)
+    .then(() => console.log("✅ Done."))
+    .catch(err => console.error("❌ Failed:", err));
 }
 
 module.exports = { createArchive };

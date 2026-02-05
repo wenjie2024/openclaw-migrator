@@ -86,30 +86,52 @@ async function restoreArchive(archivePath, targetDir, password) {
         }
       });
 
-      const extractor = tar.x({
-        cwd: targetDir,
-        filter: (path) => {
-          // Security: Block absolute paths and parent directory traversal
-          const normalizedPath = path.replace(/\\/g, '/');
-          if (normalizedPath.startsWith('/') || normalizedPath.includes('..')) {
-            console.warn(`🚨 Security: Blocked suspicious path in archive: ${path}`);
-            return false;
-          }
-          return true;
-        },
-        onentry: (entry) => {
-          console.log(`Extracting: ${entry.path}`);
+      const parser = new tar.Parser();
+
+      parser.on('entry', (entry) => {
+        const rootDir = entry.path.split('/')[0];
+        let finalPath = entry.path;
+
+        // --- Path Normalization Logic ---
+        if (rootDir === '.clawdbot' || rootDir === '.openclaw') {
+          // Config file -> .openclaw
+          finalPath = entry.path.replace(rootDir, '.openclaw');
+        } else if (entry.path !== 'manifest.json') {
+          // Workspace content -> .openclaw/workspace
+          const restPath = entry.path.substring(rootDir.length);
+          finalPath = `.openclaw/workspace${restPath}`;
+        }
+        // ---------------------------------
+
+        // Security Check
+        if (finalPath.includes('..') || finalPath.startsWith('/')) {
+          console.warn(`🚨 Security: Blocked suspicious path: ${finalPath}`);
+          entry.resume(); // Skip
+          return;
+        }
+
+        const fullDest = path.join(targetDir, finalPath);
+        console.log(`Extracting: ${entry.path} -> ${finalPath}`);
+
+        if (entry.type === 'Directory') {
+          fs.ensureDirSync(fullDest);
+          entry.resume();
+        } else if (entry.type === 'File') {
+          fs.ensureDirSync(path.dirname(fullDest));
+          entry.pipe(fs.createWriteStream(fullDest));
+        } else {
+          entry.resume();
         }
       });
 
       decipher.on('error', () => reject(new Error('Decryption failed (Wrong password or corrupted archive)')));
-      extractor.on('error', reject);
-      extractor.on('end', () => {
+      parser.on('error', reject);
+      parser.on('end', () => {
         console.log('🔓 Decryption & Extraction complete.');
         resolve();
       });
 
-      input.pipe(splitter).pipe(decipher).pipe(extractor);
+      input.pipe(splitter).pipe(decipher).pipe(parser);
     } catch (e) {
       reject(e);
     }
@@ -146,7 +168,7 @@ async function fixPaths(targetDir) {
     const manifest = fs.existsSync(manifestPath) ? await fs.readJson(manifestPath) : {};
 
     const oldHome = manifest?.home;
-    const newHome = os.homedir();
+    const newHome = process.env.HOME || os.homedir();
 
     let fixedJson = json;
 
@@ -157,16 +179,26 @@ async function fixPaths(targetDir) {
     }
 
     // 2. Heal relative workspace if it was restored into a new location
-    // (Workspace is usually relative to the user's setup, but let's ensure it's functional)
+    // New Standard: Always point to ~/.openclaw/workspace (or user provided path if we pass it later)
+
+    // Construct the standard new workspace path
+    const newWorkspace = path.join(targetDir, '.openclaw', 'workspace');
+    console.log(`📂 Normalizing workspace config to: ${newWorkspace}`);
+
+    // Force update workspace path
+    if (!fixedJson.agents) fixedJson.agents = { defaults: {} };
+    if (!fixedJson.agents.defaults) fixedJson.agents.defaults = {};
+    fixedJson.agents.defaults.workspace = newWorkspace;
+
+    // Also update root-level workspace if present (older config)
+    if (fixedJson.workspace) {
+      fixedJson.workspace = newWorkspace;
+    }
+
+    // Also fix any other references to old workspace path
     const oldWorkspace = manifest?.workspace;
-    const newWorkspace = path.join(targetDir, 'clawd');
-    if (oldWorkspace && oldWorkspace !== newWorkspace) {
-       console.log(`📂 Workspace relocated: ${oldWorkspace} -> ${newWorkspace}`);
-       // Only replace if it's explicitly the workspace path to avoid accidental string collisions
-       if (fixedJson.agents?.defaults?.workspace === oldWorkspace || 
-           fixedJson.agents?.defaults?.workspace === deepReplacePaths(oldWorkspace, oldHome, newHome)) {
-         fixedJson.agents.defaults.workspace = newWorkspace;
-       }
+    if (oldWorkspace) {
+      fixedJson = deepReplacePaths(fixedJson, oldWorkspace, newWorkspace);
     }
 
     await fs.writeJson(configPath, fixedJson, { spaces: 2 });
@@ -176,21 +208,21 @@ async function fixPaths(targetDir) {
 
 // CLI Driver
 if (require.main === module) {
-    const archive = path.join(__dirname, '../test-data/test-archive.oca');
-    const dest = path.join(__dirname, '../test-data/restore-site');
-    const pass = process.env.MIGRATOR_PASSWORD;
+  const archive = path.join(__dirname, '../test-data/test-archive.oca');
+  const dest = path.join(__dirname, '../test-data/restore-site');
+  const pass = process.env.MIGRATOR_PASSWORD;
 
-    if (!pass) {
-        console.error("Error: MIGRATOR_PASSWORD env var required");
-        process.exit(1);
-    }
+  if (!pass) {
+    console.error("Error: MIGRATOR_PASSWORD env var required");
+    process.exit(1);
+  }
 
-    fs.ensureDirSync(dest);
+  fs.ensureDirSync(dest);
 
-    restoreArchive(archive, dest, pass)
-        .then(() => fixPaths(dest))
-        .then(() => console.log("✅ Restore Done."))
-        .catch(err => console.error("❌ Failed:", err));
+  restoreArchive(archive, dest, pass)
+    .then(() => fixPaths(dest))
+    .then(() => console.log("✅ Restore Done."))
+    .catch(err => console.error("❌ Failed:", err));
 }
 
 module.exports = { restoreArchive, fixPaths };
